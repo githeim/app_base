@@ -1,0 +1,24 @@
+# Build
+build/
+compile_commands.json
+
+# 3rdparty (빌드 시 자동 구성)
+3rdparty/
+
+# Vim
+*.swp
+*.swo
+*~
+.*.swp
+.*.swo
+
+# CLion / JetBrains
+.idea/
+cmake-build-*/
+
+# VSCode
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
