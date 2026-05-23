@@ -12,6 +12,7 @@ namespace Scene::Option {
  * @param[in] dt  프레임 경과 시간 (초, OnEnter/OnExit 는 0.0f)
  */
 void OnEnter(entt::registry &ECS, float dt) {
+  (void)dt;
   OnGenericSceneEnter(ECS, SceneId::Option);
 }
 
@@ -22,6 +23,7 @@ void OnEnter(entt::registry &ECS, float dt) {
  * @param[in] dt  프레임 경과 시간 (초, OnEnter/OnExit 는 0.0f)
  */
 void OnExit(entt::registry &ECS, float dt) {
+  (void)dt;
   OnGenericSceneExit(ECS, SceneId::Option);
 }
 

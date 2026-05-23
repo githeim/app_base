@@ -17,7 +17,6 @@
 #define SCREEN_HEIGHT (480) ///< 기본 윈도우 높이 (픽셀)
 
 #define SCREEN_FPS (50)                         ///< 목표 FPS
-#define SCREEN_INTERVAL_TIME_SEC (1/800)        ///< 목표 프레임 간격 (초, 참고용)
 
 #define INITIAL_CURSOR_POS_X (100) ///< 시작 시 마우스 커서 X 좌표
 #define INITIAL_CURSOR_POS_Y (100) ///< 시작 시 마우스 커서 Y 좌표

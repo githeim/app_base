@@ -223,7 +223,6 @@ void DrawFilledCircle(SDL_Renderer *pRenderer, int cx, int cy, int r) {
  * @param dt  프레임 경과 시간 (초, ScoreCounter.timeSec 누적에 사용)
  */
 void ScoreSystem(entt::registry &ECS, float dt) {
-  (void)dt;
   auto &cmb = ECS.ctx().get<PlayCmdBuffer>();
   for (auto [e, sc] : ECS.view<ScoreCounter>().each()) {
     ScoreCounter next = sc;
@@ -259,6 +258,7 @@ void RotationSystem(entt::registry &ECS, float dt) {
  * @param dt  프레임 경과 시간 (초)
  */
 void PulseSystem(entt::registry &ECS, float dt) {
+  (void)dt;
   auto &cmb = ECS.ctx().get<PlayCmdBuffer>();
   for (auto [e, cs, sc] : ECS.view<CircleShape, ScoreCounter>().each()) {
     CircleShape next = cs;
@@ -279,6 +279,10 @@ void GlobalStateSystem(entt::registry &ECS, float dt) {
   auto &cmb      = ECS.ctx().get<PlayCmdBuffer>();
   const auto &gs = ECS.ctx().get<GameState>();
 
+  // NOTE: ScoreSystem 은 tick++ 후 tick % 60 == 0 일 때 score +1 한다.
+  // 여기서는 CommandBuffer 반영 전 스냅샷(sc.tick)을 읽으므로
+  // "다음 tick 이 60의 배수" 조건인 (sc.tick + 1) % 60 == 0 으로 동기화한다.
+  // ScoreSystem 의 점수 조건이 바뀌면 이 식도 함께 수정해야 한다.
   int scoreDelta = 0;
   for (auto [e, sc] : ECS.view<ScoreCounter>().each()) {
     scoreDelta += ((sc.tick + 1) % 60 == 0 ? 1 : 0);
@@ -308,8 +312,8 @@ void InputSystem(entt::registry &ECS, float dt) {
   auto &cmb         = ECS.ctx().get<PlayCmdBuffer>();
   auto &dispatcher  = ECS.ctx().get<entt::dispatcher>();
 
-  // q 키 — Game Over 전이
-  if (input.IsKeyHeld(SDLK_HOME)) {
+  // END 키 — Game Over 전이
+  if (input.IsKeyHeld(SDLK_END)) {
     LIG("Chk");
     dispatcher.enqueue<SceneTransitionRequest>(SceneTransitionRequest{SceneId::End});
   }

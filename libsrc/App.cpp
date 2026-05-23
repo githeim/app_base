@@ -265,7 +265,8 @@ private:
    * @param[in,out] ECS            ECS 레지스트리
    * @param[in]     dbTimeDiff_SEC 실제 경과 시간(초)
    */
-  void ProcessSdlEvents(entt::registry &ECS, double& dbTimeDiff_SEC) {
+  void ProcessSdlEvents(entt::registry &ECS, double dbTimeDiff_SEC) {
+    (void)dbTimeDiff_SEC;
     auto &dispatcher = ECS.ctx().get<entt::dispatcher>();
     auto &input      = ECS.ctx().get<InputState>();
 
@@ -340,7 +341,8 @@ private:
    * @param[in]     dbTimeDiff_SEC 실제 경과 시간(초)
    */
   void UpdateTransition(entt::registry &ECS,
-                        double& dbTimeDiff_SEC) {
+                        double dbTimeDiff_SEC) {
+    (void)dbTimeDiff_SEC;
     auto &runtime = ECS.ctx().get<SceneRuntime>();
     if (runtime.phase == TransitionPhase::None) {
       return;
@@ -434,7 +436,7 @@ private:
    * @param[in,out] ECS ECS 레지스트리
    * @param[in]     dbTimeDiff_SEC 실제 경과 시간(초)
    */
-  void Render(entt::registry &ECS, double& dbTimeDiff_SEC) {
+  void Render(entt::registry &ECS, double dbTimeDiff_SEC) {
     auto &appCtx = ECS.ctx().get<AppCtx>();
     auto &runtime = ECS.ctx().get<SceneRuntime>();
 
@@ -448,7 +450,7 @@ private:
     SDL_RenderClear(appCtx.pRenderer);
 
     if (runtime.phase == TransitionPhase::None) {
-      RenderActiveScene(ECS, runtime);
+      RenderActiveScene(ECS, runtime,dbTimeDiff_SEC);
     } else {
       RenderTransitionScreen(ECS, runtime);
     }
@@ -464,10 +466,11 @@ private:
    * @param[in,out] ECS ECS 레지스트리
    * @param[in]     runtime 현재 씬 런타임 상태
    */
-  void RenderActiveScene(entt::registry &ECS, SceneRuntime &runtime) {
+  void RenderActiveScene(entt::registry &ECS, SceneRuntime &runtime,
+                         double dbTimeDiff_SEC) {
     auto sceneIter = m_sceneMap.find(runtime.activeScene);
     if (sceneIter != m_sceneMap.end()) {
-      sceneIter->second.onRender(ECS, (float)m_LastDeltaTime_SEC);
+      sceneIter->second.onRender(ECS, (float)dbTimeDiff_SEC);
     }
   }
 
@@ -479,13 +482,13 @@ private:
    * @param[in,out] ECS ECS 레지스트리
    * @param[in]     dbTimeDiff_SEC 실제 경과 시간(초)
    */
-  void UpdateActiveScene(entt::registry &ECS, double& dbTimeDiff_SEC) {
+  void UpdateActiveScene(entt::registry &ECS, double dbTimeDiff_SEC) {
     const auto &runtime = ECS.ctx().get<SceneRuntime>();
     if (runtime.phase != TransitionPhase::None) return;
 
     auto sceneIter = m_sceneMap.find(runtime.activeScene);
     if (sceneIter != m_sceneMap.end() && sceneIter->second.onUpdate) {
-      sceneIter->second.onUpdate(ECS, (float)m_LastDeltaTime_SEC);
+      sceneIter->second.onUpdate(ECS, (float)dbTimeDiff_SEC);
     }
   }
 
@@ -530,6 +533,8 @@ private:
   void StartTransition(entt::registry &ECS, SceneId target) {
     auto &runtime = ECS.ctx().get<SceneRuntime>();
     if (runtime.shouldQuit || runtime.phase != TransitionPhase::None) {
+      LWY("StartTransition: ignored, phase=" << ToString(runtime.phase)
+          << " target=" << ToString(target));
       return;
     }
     if (runtime.activeScene == target) {
