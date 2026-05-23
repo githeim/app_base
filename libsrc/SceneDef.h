@@ -6,6 +6,9 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <unordered_set>
+
+#include <SDL2/SDL_keycode.h>
 
 #include "scenes/SceneMap.h"
 
@@ -64,6 +67,7 @@ struct AppQuitRequest {
  * fProgress, szStatus 는 atomic 으로 thread-safe 하게 공유한다.
  *
  * szPhase/szCurrentScene/szTargetScene 은 main thread 전용 스냅샷이다.
+ * 메인 스레드가 전이 시작 시점에 한 번 세팅하고 만다는 의미에서의 스냅샷
  * 전이 시작 시 App.cpp 가 설정하고 RenderTransitionScreen 이 읽는다.
  *
  * 사용 예:
@@ -122,4 +126,37 @@ struct GameState {
   int         score       = 0;         ///< 게임 전체 누적 점수
   int         gold        = 0;         ///< 보유 골드 (재화 예시)
   float       playTimeSec = 0.0f;      ///< 총 플레이 시간(초)
+};
+
+/**
+ * @brief 매 프레임 갱신되는 입력 장치 상태이다.
+ *
+ * App.cpp 의 ProcessSdlEvents() 에서 SDL 이벤트 큐를 소진한 후 최신 상태로 유지한다.
+ * 씬의 OnUpdate() 에서 ECS.ctx().get<InputState>() 로 읽기 전용 접근한다.
+ *
+ * 동시 입력 감지 예시:
+ *   const auto &input = ECS.ctx().get<InputState>();
+ *   if (input.IsKeyHeld(SDLK_w) && input.IsKeyHeld(SDLK_a)) { ... }
+ */
+struct InputState {
+  std::unordered_set<SDL_Keycode> keysHeld;        ///< 현재 눌린 키 집합
+  std::unordered_set<int>         joyButtonsHeld;  ///< 현재 눌린 조이스틱 버튼 집합
+  float joyAxisX = 0.0f;  ///< 조이스틱 X 축 (-1.0 ~ 1.0)
+  float joyAxisY = 0.0f;  ///< 조이스틱 Y 축 (-1.0 ~ 1.0)
+
+  // 마우스 버튼 (SDL_BUTTON_LEFT=1, SDL_BUTTON_MIDDLE=2, SDL_BUTTON_RIGHT=3)
+  std::unordered_set<int> mouseButtonsHeld;      ///< 현재 누르고 있는 버튼
+  std::unordered_set<int> mouseButtonsPressed;   ///< 이번 프레임에 누른 버튼 (1회성, 매 프레임 clear)
+  std::unordered_set<int> mouseButtonsReleased;  ///< 이번 프레임에 뗀 버튼 (1회성, 매 프레임 clear)
+
+  // 마우스 위치 / 휠
+  int mouseX      = 0;  ///< 현재 커서 X (픽셀)
+  int mouseY      = 0;  ///< 현재 커서 Y (픽셀)
+  int wheelDeltaY = 0;  ///< 이번 프레임 휠 스크롤 (+위/-아래, 매 프레임 clear)
+
+  bool IsKeyHeld(SDL_Keycode key) const    { return keysHeld.count(key) > 0; }
+  bool IsJoyButtonHeld(int btn) const      { return joyButtonsHeld.count(btn) > 0; }
+  bool IsMouseHeld(int btn) const          { return mouseButtonsHeld.count(btn) > 0; }
+  bool IsMousePressed(int btn) const       { return mouseButtonsPressed.count(btn) > 0; }
+  bool IsMouseReleased(int btn) const      { return mouseButtonsReleased.count(btn) > 0; }
 };

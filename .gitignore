@@ -19,6 +19,9 @@ cmake-build-*/
 # VSCode
 .vscode/
 
+# clangd
+.cache/
+
 # OS
 .DS_Store
 Thumbs.db

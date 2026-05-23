@@ -52,7 +52,8 @@ void EndFullscreenUi() {
  * @param[in]     subtitle 씬 설명 문자열
  */
 void RenderSceneChrome(entt::registry &ECS, SceneId scene,
-                       const char *heading, const char *subtitle) {
+                       const char *heading, const char *subtitle, float dt) {
+  (void)dt;
   const auto &runtime = ECS.ctx().get<SceneRuntime>();
   BeginFullscreenUi(heading);
   ImGui::SetWindowFontScale(2.0f);
@@ -78,10 +79,12 @@ void RenderSceneChrome(entt::registry &ECS, SceneId scene,
  *
  * @param[in,out] ECS   ECS 레지스트리
  * @param[in]     scene 진입한 씬
+ * @param[in] dt  프레임 경과 시간 (초, 미사용, 확장 예약)
  */
-void OnGenericSceneEnter(entt::registry &ECS, SceneId scene) {
+void OnGenericSceneEnter(entt::registry &ECS, SceneId scene, float dt) {
   (void)ECS;
   (void)scene;
+  (void)dt;
 }
 
 /**
@@ -92,8 +95,10 @@ void OnGenericSceneEnter(entt::registry &ECS, SceneId scene) {
  *
  * @param[in,out] ECS   ECS 레지스트리
  * @param[in]     scene 이탈한 씬
+ * @param[in] dt  프레임 경과 시간 (초, 미사용, 확장 예약)
  */
-void OnGenericSceneExit(entt::registry &ECS, SceneId scene) {
+void OnGenericSceneExit(entt::registry &ECS, SceneId scene, float dt) {
   (void)ECS;
   (void)scene;
+  (void)dt;
 }

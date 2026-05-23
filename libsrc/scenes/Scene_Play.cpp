@@ -8,7 +8,7 @@
 
 #include <SDL2/SDL.h>
 #include <cmath>
-
+#include "Log_Util.h"
 namespace Scene::Play {
 
 namespace {
@@ -65,7 +65,8 @@ struct RectShape {
  */
 struct ScoreCounter {
   int      score = 0;  ///< 씬 내 누적 점수
-  uint64_t tick  = 0;  ///< OnUpdate 호출 횟수
+  uint64_t tick    = 0;    ///< OnUpdate 호출 횟수
+  float    timeSec = 0.0f;  ///< 누적 경과 시간 (초)
 };
 
 /**
@@ -99,6 +100,8 @@ struct CmdUpdateTransform   { entt::entity e; Transform    value; };
 struct CmdUpdateCircleShape { entt::entity e; CircleShape  value; };
 /// ScoreCounter 값을 덮어쓰는 커맨드
 struct CmdUpdateScoreCounter{ entt::entity e; ScoreCounter value; };
+/// RectShape angle 을 덮어쓰는 커맨드 (Transform 재사용)
+struct CmdUpdateRectAngle   { entt::entity e; float angle; };
 
 /// 기존 entity 에 RotationSpeed 컴포넌트를 추가하는 커맨드
 struct CmdAddRotationSpeed    { entt::entity e; RotationSpeed value; };
@@ -116,6 +119,10 @@ inline void Apply(entt::registry &reg, const CmdUpdateCircleShape &c) {
 inline void Apply(entt::registry &reg, const CmdUpdateScoreCounter &c) {
   if (reg.valid(c.e) && reg.all_of<ScoreCounter>(c.e))
     reg.get<ScoreCounter>(c.e) = c.value;
+}
+inline void Apply(entt::registry &reg, const CmdUpdateRectAngle &c) {
+  if (reg.valid(c.e) && reg.all_of<Transform>(c.e))
+    reg.get<Transform>(c.e).angle = c.angle;
 }
 inline void Apply(entt::registry &reg, const CmdAddRotationSpeed &c) {
   if (reg.valid(c.e)) reg.emplace_or_replace<RotationSpeed>(c.e, c.value);
@@ -138,6 +145,7 @@ using PlayCmd = std::variant<
   CmdUpdateTransform,
   CmdUpdateCircleShape,
   CmdUpdateScoreCounter,
+  CmdUpdateRectAngle,
   CmdAddRotationSpeed,
   CmdRemoveRotationSpeed
 >;
@@ -212,7 +220,7 @@ void DrawFilledCircle(SDL_Renderer *pRenderer, int cx, int cy, int r) {
  * 의도된 동작이다 — 같은 프레임 내 상태는 프레임 시작 스냅샷 기준으로 읽는다.
  *
  * @param ECS 레지스트리 (읽기 전용)
- * @param dt  프레임 경과 시간 (초, 틱 기반이므로 미사용)
+ * @param dt  프레임 경과 시간 (초, ScoreCounter.timeSec 누적에 사용)
  */
 void ScoreSystem(entt::registry &ECS, float dt) {
   (void)dt;
@@ -220,6 +228,7 @@ void ScoreSystem(entt::registry &ECS, float dt) {
   for (auto [e, sc] : ECS.view<ScoreCounter>().each()) {
     ScoreCounter next = sc;
     next.tick++;
+    next.timeSec += dt;
     if (next.tick % 60 == 0) next.score++;
     cmb.Add(CmdUpdateScoreCounter{e, next});
   }
@@ -253,7 +262,7 @@ void PulseSystem(entt::registry &ECS, float dt) {
   auto &cmb = ECS.ctx().get<PlayCmdBuffer>();
   for (auto [e, cs, sc] : ECS.view<CircleShape, ScoreCounter>().each()) {
     CircleShape next = cs;
-    next.r = cs.baseR + cs.baseR * 0.33f * std::sin(sc.tick * 3.0f * dt);
+    next.r = cs.baseR + cs.baseR * 0.33f * std::sin(sc.timeSec * 3.0f);
     cmb.Add(CmdUpdateCircleShape{e, next});
   }
 }
@@ -282,6 +291,44 @@ void GlobalStateSystem(entt::registry &ECS, float dt) {
     g.playTimeSec = newTime;
     g.score       = newScore;
   }});
+}
+
+/**
+ * @brief InputState ctx 를 읽어 좌우 방향키로 사각형 entity 의 angle 을 갱신한다.
+ *
+ * - 좌방향키(SDLK_LEFT) : angle 감소 (반시계 회전)
+ * - 우방향키(SDLK_RIGHT): angle 증가 (시계 회전)
+ * - 좌우 동시 입력      : 서로 상쇄되어 각도 유지
+ *
+ * @param ECS 레지스트리 (읽기 전용, CommandBuffer 경유 수정)
+ * @param dt  프레임 경과 시간 (초)
+ */
+void InputSystem(entt::registry &ECS, float dt) {
+  const auto &input = ECS.ctx().get<InputState>();
+  auto &cmb         = ECS.ctx().get<PlayCmdBuffer>();
+  auto &dispatcher  = ECS.ctx().get<entt::dispatcher>();
+
+  // q 키 — Game Over 전이
+  if (input.IsKeyHeld(SDLK_HOME)) {
+    LIG("Chk");
+    dispatcher.enqueue<SceneTransitionRequest>(SceneTransitionRequest{SceneId::End});
+  }
+
+  constexpr float kRotSpeed = 2.0f;  // 라디안/초
+  constexpr float kTwoPi    = 6.2832f;
+
+  float delta = 0.0f;
+  if (input.IsKeyHeld(SDLK_LEFT))  delta -= kRotSpeed * dt;
+  if (input.IsKeyHeld(SDLK_RIGHT)) delta += kRotSpeed * dt;
+
+  if (delta == 0.0f) return;
+
+  for (auto [e, tf, rs] : ECS.view<Transform, RectShape>().each()) {
+    float next = tf.angle + delta;
+    if (next >  kTwoPi) next -= kTwoPi;
+    if (next < -kTwoPi) next += kTwoPi;
+    cmb.Add(CmdUpdateRectAngle{e, next});
+  }
 }
 
 
@@ -344,7 +391,15 @@ void RenderCircleSystem(entt::registry &ECS, float dt) {
 }
 
 /**
- * @brief RectShape + Transform + Color 를 읽어 SDL 로 사각형을 그린다.
+ * @brief RectShape + Transform + Color 를 읽어 회전된 사각형을 SDL 로 그린다.
+ *
+ * Transform.angle 을 기준으로 꼭짓점 4개를 계산하고,
+ * 삼각형 2개(fan 분할)로 속이 찬 사각형을 렌더링한다.
+ *
+ * 꼭짓점 배치 (로컬 좌표, 반시계):
+ *   v0(-h,-h)  v1(+h,-h)
+ *   v3(-h,+h)  v2(+h,+h)
+ * 삼각형 분할: [v0,v1,v2] + [v0,v2,v3]
  *
  * @param ECS 레지스트리 (읽기 전용)
  * @param dt  프레임 경과 시간 (미사용)
@@ -360,11 +415,27 @@ void RenderRectSystem(entt::registry &ECS, float dt) {
   auto view = ECS.view<Transform, RectShape, Color>();
   for (auto [e, tf, rs, col] : view.each()) {
     SDL_SetRenderDrawColor(appCtx.pRenderer, col.r, col.g, col.b, SDL_ALPHA_OPAQUE);
-    int half = static_cast<int>(rs.half);
-    int cx   = static_cast<int>(tf.x * winW);
-    int cy   = gameY + static_cast<int>(tf.y * gameH);
-    SDL_Rect rect{cx - half, cy - half, half * 2, half * 2};
-    SDL_RenderFillRect(appCtx.pRenderer, &rect);
+
+    int cx = static_cast<int>(tf.x * winW);
+    int cy = gameY + static_cast<int>(tf.y * gameH);
+    float h  = rs.half;
+    float ca = std::cos(tf.angle);
+    float sa = std::sin(tf.angle);
+
+    // 4개 꼭짓점 회전 변환
+    // 로컬 (-h,-h),(+h,-h),(+h,+h),(-h,+h) → 월드 좌표
+    auto rotX = [&](float lx, float ly) { return cx + static_cast<int>(lx * ca - ly * sa); };
+    auto rotY = [&](float lx, float ly) { return cy + static_cast<int>(lx * sa + ly * ca); };
+
+    int x0 = rotX(-h,-h), y0 = rotY(-h,-h);
+    int x1 = rotX( h,-h), y1 = rotY( h,-h);
+    int x2 = rotX( h, h), y2 = rotY( h, h);
+    int x3 = rotX(-h, h), y3 = rotY(-h, h);
+
+    // 삼각형 1: v0-v1-v2
+    DrawFilledTriangle(appCtx.pRenderer, x0,y0, x1,y1, x2,y2);
+    // 삼각형 2: v0-v2-v3
+    DrawFilledTriangle(appCtx.pRenderer, x0,y0, x2,y2, x3,y3);
   }
 }
 
@@ -414,9 +485,17 @@ void HudSystem(entt::registry &ECS, float dt) {
     ImGui::Text("Score: %d  Frame: %llu", sc.score, (unsigned long long)sc.tick);
   }
 
-  ImGui::TextUnformatted("삼각형(R)회전  원(G)맥박  사각형(B)고정");
+  ImGui::TextUnformatted("삼각형(R)회전  원(G)맥박  사각형(B)방향키 회전");
   ImGui::Text("Player: %s  Level: %d  Gold: %d  TotalTime: %.1fs",
               gGs.playerName.c_str(), gGs.level, gGs.gold, gGs.playTimeSec);
+
+  const auto &input = ECS.ctx().get<InputState>();
+  ImGui::Text("Mouse  X: %d  Y: %d  L:%s  M:%s  R:%s  Wheel:%d",
+              input.mouseX, input.mouseY,
+              input.IsMouseHeld(SDL_BUTTON_LEFT)   ? "ON" : "--",
+              input.IsMouseHeld(SDL_BUTTON_MIDDLE) ? "ON" : "--",
+              input.IsMouseHeld(SDL_BUTTON_RIGHT)  ? "ON" : "--",
+              input.wheelDeltaY);
   ImGui::Spacing();
 
   auto &dispatcher = ECS.ctx().get<entt::dispatcher>();
@@ -463,8 +542,9 @@ void HudSystem(entt::registry &ECS, float dt) {
  * - 사각형 : Transform + RectShape + Color(Blue) + PlaySceneTag
  *
  * @param ECS ECS 레지스트리
+ * @param[in] dt  프레임 경과 시간 (초, OnEnter/OnExit 는 0.0f)
  */
-void OnEnter(entt::registry &ECS) {
+void OnEnter(entt::registry &ECS, float dt) {
   OnGenericSceneEnter(ECS, SceneId::Play);
 
   auto &lc = ECS.ctx().get<SceneLoadingContext>();
@@ -537,8 +617,9 @@ void OnEnter(entt::registry &ECS) {
  * PlaySceneTag entity 를 일괄 destroy 하고 CommandBuffer ctx 를 해제한다.
  *
  * @param ECS ECS 레지스트리
+ * @param[in] dt  프레임 경과 시간 (초, OnEnter/OnExit 는 0.0f)
  */
-void OnExit(entt::registry &ECS) {
+void OnExit(entt::registry &ECS, float dt) {
   OnGenericSceneExit(ECS, SceneId::Play);
 
   auto &lc = ECS.ctx().get<SceneLoadingContext>();
@@ -576,16 +657,18 @@ void OnExit(entt::registry &ECS) {
  *  2. RotationSystem    — Transform.angle 변경 예약
  *  3. PulseSystem       — CircleShape.r 변경 예약 (tick 스냅샷 기준)
  *  4. GlobalStateSystem — GameState ctx 변경 예약
- *  5. Flush             — 이 턴의 모든 변경 일괄 반영
+ *  5. InputSystem       — 좌우 방향키로 사각형 angle 변경 예약
+ *  6. Flush             — 이 턴의 모든 변경 일괄 반영
  *
  * @param ECS ECS 레지스트리
+ * @param[in] dt  프레임 경과 시간 (초, OnEnter/OnExit 는 0.0f)
  */
-void OnUpdate(entt::registry &ECS) {
-  constexpr float dt = 1.0f / 60.0f;
+void OnUpdate(entt::registry &ECS, float dt) {
   ScoreSystem(ECS, dt);
   RotationSystem(ECS, dt);
   PulseSystem(ECS, dt);
   GlobalStateSystem(ECS, dt);
+  InputSystem(ECS, dt);
   ECS.ctx().get<PlayCmdBuffer>().Flush(ECS);
 }
 
@@ -600,9 +683,9 @@ void OnUpdate(entt::registry &ECS) {
  *  5. HudSystem (ImGui)
  *
  * @param ECS ECS 레지스트리
+ * @param[in] dt  프레임 경과 시간 (초, OnEnter/OnExit 는 0.0f)
  */
-void OnRender(entt::registry &ECS) {
-  constexpr float dt = 1.0f / 60.0f;
+void OnRender(entt::registry &ECS, float dt) {
   auto &appCtx = ECS.ctx().get<AppCtx>();
 
   // 게임 영역 배경

@@ -51,8 +51,9 @@ public:
     m_pECS->ctx().emplace<AppCtx>();
     m_pECS->ctx().emplace<entt::dispatcher>();
     m_pECS->ctx().emplace<SceneRuntime>();
-    m_pECS->ctx().emplace<GameState>();   // 앱 전역 누적 상태 (씬 간 공유)
-    m_pECS->ctx().emplace<SceneLoadingContext>(); // 로딩 진행도 공유 컨텍스트
+    m_pECS->ctx().emplace<GameState>();
+    m_pECS->ctx().emplace<SceneLoadingContext>();
+    m_pECS->ctx().emplace<InputState>();  // 매 프레임 갱신되는 입력 장치 상태
 
     SetupSceneMap();
     SetupProcedureMap();
@@ -110,23 +111,25 @@ public:
     auto &appCtx = ECS.ctx().get<AppCtx>();
     auto &runtime = ECS.ctx().get<SceneRuntime>();
 
+    double actualDiff_SEC = 1.0/APP_LPS;
+
     if (appCtx.pWindow == nullptr || appCtx.pRenderer == nullptr) {
       runtime.shouldQuit = true;
       return 1;
     }
 
-    ProcessSdlEvents(ECS);
+    ProcessSdlEvents(ECS,m_LastDeltaTime_SEC);
 
     auto &dispatcher = ECS.ctx().get<entt::dispatcher>();
     dispatcher.update<SceneTransitionRequest>();
     dispatcher.update<AppQuitRequest>();
 
-    UpdateTransition(ECS);
-    UpdateActiveScene(ECS);
-    Render(ECS);
+    UpdateTransition(ECS,m_LastDeltaTime_SEC);
+    UpdateActiveScene(ECS,m_LastDeltaTime_SEC);
+    Render(ECS,m_LastDeltaTime_SEC);
 
-    double actualDiff_SEC = 0.0;
     FPS_Ctrl(MAIN_APP, 1.0 / APP_LPS, actualDiff_SEC);
+    m_LastDeltaTime_SEC = actualDiff_SEC;
     return runtime.shouldQuit ? 1 : 0;
   }
 
@@ -180,13 +183,15 @@ public:
     StartQuit(*m_pECS);
   }
 
+  
   CBase Base;
   std::shared_ptr<entt::registry> m_pECS;
 
 private:
   Proc_Map_T m_procMap;
   std::map<SceneId, SceneDefinition> m_sceneMap;
-
+  double m_LastDeltaTime_SEC = 1.0/APP_LPS; // 측정된 마지막 time delta
+                                            
   /**
    * @brief Pre/Loop/Post 루프 콜백 맵을 구성한다.
    */
@@ -250,16 +255,80 @@ private:
   /**
    * @brief SDL 이벤트를 처리하고 필요한 경우 종료 이벤트를 enqueue 한다.
    *
-   * @param[in,out] ECS ECS 레지스트리
+   * 키보드/마우스/조이스틱 이벤트는 InputState ctx 에 즉시 반영한다.
+   * SDL 이벤트 큐를 한 프레임에 전부 소진하므로 OnUpdate 호출 시점에는
+   * 해당 프레임의 모든 입력이 반영되어 있다.
+   *
+   * pressed/released/wheelDeltaY 는 1회성 값이므로 이벤트 처리 전에 초기화한다.
+   * ImGui 가 마우스/키보드를 소비 중인지는 씬에서 WantCaptureMouse/WantCaptureKeyboard 로 확인한다.
+   *
+   * @param[in,out] ECS            ECS 레지스트리
+   * @param[in]     dbTimeDiff_SEC 실제 경과 시간(초)
    */
-  void ProcessSdlEvents(entt::registry &ECS) {
-    SDL_Event event;
+  void ProcessSdlEvents(entt::registry &ECS, double& dbTimeDiff_SEC) {
     auto &dispatcher = ECS.ctx().get<entt::dispatcher>();
+    auto &input      = ECS.ctx().get<InputState>();
 
+    // 1회성 값 매 프레임 초기화
+    input.mouseButtonsPressed.clear();
+    input.mouseButtonsReleased.clear();
+    input.wheelDeltaY = 0;
+
+    SDL_Event event;
     while (SDL_PollEvent(&event) != 0) {
       ImGui_ImplSDL2_ProcessEvent(&event);
-      if (event.type == SDL_QUIT) {
-        dispatcher.enqueue<AppQuitRequest>(AppQuitRequest{});
+
+      switch (event.type) {
+        case SDL_QUIT:
+          dispatcher.enqueue<AppQuitRequest>(AppQuitRequest{});
+          break;
+
+        // 키보드
+        case SDL_KEYDOWN:
+          input.keysHeld.insert(event.key.keysym.sym);
+          break;
+        case SDL_KEYUP:
+          input.keysHeld.erase(event.key.keysym.sym);
+          break;
+
+        // 마우스 버튼
+        case SDL_MOUSEBUTTONDOWN:
+          input.mouseButtonsHeld.insert(event.button.button);
+          input.mouseButtonsPressed.insert(event.button.button);
+          break;
+        case SDL_MOUSEBUTTONUP:
+          input.mouseButtonsHeld.erase(event.button.button);
+          input.mouseButtonsReleased.insert(event.button.button);
+          break;
+
+        // 마우스 위치
+        case SDL_MOUSEMOTION:
+          input.mouseX = event.motion.x;
+          input.mouseY = event.motion.y;
+          break;
+
+        // 마우스 휠
+        case SDL_MOUSEWHEEL:
+          input.wheelDeltaY += event.wheel.y;
+          break;
+
+        // 조이스틱
+        case SDL_JOYBUTTONDOWN:
+          input.joyButtonsHeld.insert(event.jbutton.button);
+          break;
+        case SDL_JOYBUTTONUP:
+          input.joyButtonsHeld.erase(event.jbutton.button);
+          break;
+        case SDL_JOYAXISMOTION: {
+          constexpr float kAxisScale = 1.0f / 32767.0f;
+          if (event.jaxis.axis == 0)
+            input.joyAxisX = event.jaxis.value * kAxisScale;
+          else if (event.jaxis.axis == 1)
+            input.joyAxisY = event.jaxis.value * kAxisScale;
+          break;
+        }
+        default:
+          break;
       }
     }
   }
@@ -267,9 +336,11 @@ private:
   /**
    * @brief 씬 전이 타이머를 갱신하고 단계별 상태를 진행시킨다.
    *
-   * @param[in,out] ECS ECS 레지스트리
+   * @param[in,out] ECS            ECS 레지스트리
+   * @param[in]     dbTimeDiff_SEC 실제 경과 시간(초)
    */
-  void UpdateTransition(entt::registry &ECS) {
+  void UpdateTransition(entt::registry &ECS,
+                        double& dbTimeDiff_SEC) {
     auto &runtime = ECS.ctx().get<SceneRuntime>();
     if (runtime.phase == TransitionPhase::None) {
       return;
@@ -361,8 +432,9 @@ private:
    * @brief 현재 프레임의 배경과 UI 를 렌더링한다.
    *
    * @param[in,out] ECS ECS 레지스트리
+   * @param[in]     dbTimeDiff_SEC 실제 경과 시간(초)
    */
-  void Render(entt::registry &ECS) {
+  void Render(entt::registry &ECS, double& dbTimeDiff_SEC) {
     auto &appCtx = ECS.ctx().get<AppCtx>();
     auto &runtime = ECS.ctx().get<SceneRuntime>();
 
@@ -370,7 +442,8 @@ private:
     ImGui_ImplSDL2_NewFrame();
     ImGui::NewFrame();
 
-    const ColorRgb bg = (runtime.phase == TransitionPhase::None) ? kSceneBackground : kTransitionBackground;
+    const ColorRgb bg = (runtime.phase == TransitionPhase::None) ? 
+                                       kSceneBackground : kTransitionBackground;
     SDL_SetRenderDrawColor(appCtx.pRenderer, bg.r, bg.g, bg.b, SDL_ALPHA_OPAQUE);
     SDL_RenderClear(appCtx.pRenderer);
 
@@ -394,7 +467,7 @@ private:
   void RenderActiveScene(entt::registry &ECS, SceneRuntime &runtime) {
     auto sceneIter = m_sceneMap.find(runtime.activeScene);
     if (sceneIter != m_sceneMap.end()) {
-      sceneIter->second.onRender(ECS);
+      sceneIter->second.onRender(ECS, (float)m_LastDeltaTime_SEC);
     }
   }
 
@@ -404,14 +477,15 @@ private:
    * onUpdate 가 nullptr 이면 조용히 스킵한다.
    *
    * @param[in,out] ECS ECS 레지스트리
+   * @param[in]     dbTimeDiff_SEC 실제 경과 시간(초)
    */
-  void UpdateActiveScene(entt::registry &ECS) {
+  void UpdateActiveScene(entt::registry &ECS, double& dbTimeDiff_SEC) {
     const auto &runtime = ECS.ctx().get<SceneRuntime>();
     if (runtime.phase != TransitionPhase::None) return;
 
     auto sceneIter = m_sceneMap.find(runtime.activeScene);
     if (sceneIter != m_sceneMap.end() && sceneIter->second.onUpdate) {
-      sceneIter->second.onUpdate(ECS);
+      sceneIter->second.onUpdate(ECS, (float)m_LastDeltaTime_SEC);
     }
   }
 
@@ -431,7 +505,8 @@ private:
     ImGui::Text("Target: %s",        lc.szTargetScene);
     ImGui::Spacing();
     ImGui::TextWrapped(
-        "Transition order: TearingDown 화면 표시 -> current scene OnExit 수행 -> Loading 화면 표시 -> target scene OnEnter 수행 -> target scene 화면");
+     "Transition order: TearingDown 화면 표시 -> current scene OnExit 수행"
+     " -> Loading 화면 표시 -> target scene OnEnter 수행 -> target scene 화면");
     ImGui::Spacing();
     // 진행도 표시
     float progress      = lc.fProgress.load();
@@ -467,7 +542,8 @@ private:
     runtime.phaseScreenPresented = false;
     runtime.phaseWorkDone = false;
     runtime.exitAfterFinishing = false;
-    runtime.lifecycleNote = std::string("Starting ") + ToString(runtime.phase) + " for " + ToString(runtime.activeScene);
+    runtime.lifecycleNote = std::string("Starting ") + ToString(runtime.phase) + 
+                            " for " + ToString(runtime.activeScene);
 
     // 전이 화면 스냅샷 설정 (main thread 전용)
     auto &lc = ECS.ctx().get<SceneLoadingContext>();
@@ -492,7 +568,8 @@ private:
     runtime.phaseScreenPresented = false;
     runtime.phaseWorkDone = false;
     runtime.exitAfterFinishing = true;
-    runtime.lifecycleNote = std::string("Starting ") + ToString(runtime.phase) + " for application exit";
+    runtime.lifecycleNote = std::string("Starting ") + ToString(runtime.phase) +
+                            " for application exit";
 
     // 전이 화면 스냅샷 설정 (main thread 전용)
     auto &lc = ECS.ctx().get<SceneLoadingContext>();
@@ -510,7 +587,7 @@ private:
   void InvokeOnEnter(entt::registry &ECS, SceneId scene) {
     auto sceneIter = m_sceneMap.find(scene);
     if (sceneIter != m_sceneMap.end() && sceneIter->second.onEnter) {
-      sceneIter->second.onEnter(ECS);
+      sceneIter->second.onEnter(ECS, 0.0f);
     }
   }
 
@@ -523,7 +600,7 @@ private:
   void InvokeOnExit(entt::registry &ECS, SceneId scene) {
     auto sceneIter = m_sceneMap.find(scene);
     if (sceneIter != m_sceneMap.end() && sceneIter->second.onExit) {
-      sceneIter->second.onExit(ECS);
+      sceneIter->second.onExit(ECS, 0.0f);
     }
   }
 

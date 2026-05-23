@@ -9,8 +9,9 @@ namespace Scene::End {
  * @brief End 씬 진입 시 호출된다. 공통 진입 카운터를 갱신한다.
  *
  * @param[in,out] ECS ECS 레지스트리
+ * @param[in] dt  프레임 경과 시간 (초, OnEnter/OnExit 는 0.0f)
  */
-void OnEnter(entt::registry &ECS) {
+void OnEnter(entt::registry &ECS, float dt) {
   OnGenericSceneEnter(ECS, SceneId::End);
 }
 
@@ -18,8 +19,9 @@ void OnEnter(entt::registry &ECS) {
  * @brief End 씬 이탈 시 호출된다. 공통 이탈 카운터를 갱신한다.
  *
  * @param[in,out] ECS ECS 레지스트리
+ * @param[in] dt  프레임 경과 시간 (초, OnEnter/OnExit 는 0.0f)
  */
-void OnExit(entt::registry &ECS) {
+void OnExit(entt::registry &ECS, float dt) {
   OnGenericSceneExit(ECS, SceneId::End);
 }
 
@@ -29,8 +31,9 @@ void OnExit(entt::registry &ECS) {
  * "To Main Menu" 버튼 클릭 시 Main Menu 씬으로의 전이를 요청한다.
  *
  * @param[in,out] ECS ECS 레지스트리
+ * @param[in] dt  프레임 경과 시간 (초, OnEnter/OnExit 는 0.0f)
  */
-void OnRender(entt::registry &ECS) {
+void OnRender(entt::registry &ECS, float dt) {
   RenderSceneChrome(ECS, SceneId::End, "End",
                    "종료 화면 예제로 Main Menu 복귀 경로를 제공한다.");
 

@@ -18,14 +18,14 @@ namespace Scene::Play {
    *
    * @param[in,out] ECS ECS 레지스트리
    */
-  void OnEnter(entt::registry &ECS);
+  void OnEnter(entt::registry &ECS, float dt);
 
   /**
    * @brief Play 씬 이탈 시 호출된다. 공통 이탈 카운터를 갱신한다.
    *
    * @param[in,out] ECS ECS 레지스트리
    */
-  void OnExit(entt::registry &ECS);
+  void OnExit(entt::registry &ECS, float dt);
 
   /**
    * @brief 매 프레임 Play 씬을 렌더링한다.
@@ -35,7 +35,7 @@ namespace Scene::Play {
    *
    * @param[in,out] ECS ECS 레지스트리
    */
-  void OnRender(entt::registry &ECS);
+  void OnRender(entt::registry &ECS, float dt);
 
   /**
    * @brief 매 프레임 Play 씬 게임 로직을 갱신한다.
@@ -44,5 +44,5 @@ namespace Scene::Play {
    *
    * @param[in,out] ECS ECS 레지스트리
    */
-  void OnUpdate(entt::registry &ECS);
+  void OnUpdate(entt::registry &ECS, float dt);
 }

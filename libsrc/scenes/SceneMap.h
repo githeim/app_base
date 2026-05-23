@@ -41,7 +41,7 @@ inline const char *ToString(const SceneId scene) {
 /**
  * @brief 씬 훅 함수 타입. EnTT 레지스트리를 받아 동작을 수행한다.
  */
-using SceneHook = std::function<void(entt::registry &)>;
+using SceneHook = std::function<void(entt::registry &, float)>;
 
 /**
  * @brief 씬 하나에 연결된 생명주기 훅 집합이다.
